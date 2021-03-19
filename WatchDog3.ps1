@@ -113,21 +113,79 @@ function Time{Get-Date -F hh:mm:ss}
     $query="MATCH (n:User) RETURN n"
     Cypher $Query -Expand $Null
 #>
+
+function ConvertTo-B64String {
+    param(
+        [Parameter(Mandatory=$true,Position=1)]
+        [string]$InputString
+    )
+    begin{}
+    process{
+        $encodedString = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($inputString))
+    }
+    end{
+        return $encodedString
+    }
+}
+
+function createBasicCred {
+    param(
+        [Parameter(Mandatory=$false,Position=1)]
+        [pscredential]$Cred
+    )
+    Begin{}
+    Process{
+        if($null -eq $Cred){
+            $Cred = Get-Credential -Message "Please enter your credentials"
+        }
+        $credPass = (New-Object System.Management.Automation.PSCredential -ArgumentList $Cred.UserName,$Cred.Password).GetNetworkCredential().Password
+        $basicCred = ConvertTo-B64String -InputString "$($Cred.UserName):$credPass"
+    }
+    End{
+        return $basicCred
+    }
+}
+
+function createNeo4jHeaders {
+    param(
+        [Parameter(Mandatory=$false,Position=1)]
+        [pscredential]$neo4jCredential 
+    )
+    Begin{}
+    Process{
+        $basicCred = createBasicCred -Cred $neo4jCredential
+        $headers = @{
+            "Accept"="application/json; charset=UTF-8";
+            "Content-Type"="application/json";
+            "Authorization"="Basic $basicCred"
+        }
+    }
+    End{
+        return $headers
+    }
+}
+
 function Invoke-Cypher{
     [CmdletBinding()]
     [Alias('Cypher')]
     Param(
         # Cypher Query
-        [Parameter(Mandatory=1)][string]$Query,
+        [Parameter(Mandatory=$true,Position=1)][string]$Query,
         # Query Params [optional]
-        [Parameter(Mandatory=0)][Hashtable]$Params,
+        [Parameter(Mandatory=$false,Position=2)][Hashtable]$Params,
         # Expand Props [Default to .data.data /  Use -Expand $Null for raw objects]
-        [Parameter(Mandatory=0)][Alias('x')][String[]]$Expand=@('data','data')
+        [Parameter(Mandatory=$false,Position=3)][Alias('x')][String[]]$Expand=@('data','data'),
+        # Server for neo4j
+        [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
         )
     # Uri 
-    $Uri = "http://localhost:7474/db/data/cypher"
+    $Uri = "http://$Server`:$Port/db/data/cypher"
     # Header
-    $Header=@{'Accept'='application/json; charset=UTF-8';'Content-Type'='application/json'}
+    $Header= createNeo4jHeaders -neo4jCredential $neo4jCredential
     # Query [spec chars to unicode]
     $Query=$($Query.ToCharArray()|%{$x=[Byte][Char]"$_";if($x-gt191-AND$x-le255){'\u{0:X4}'-f$x}else{$_}})-join''
     # Body
@@ -157,19 +215,25 @@ function Invoke-Cypher{
 #>
 function Get-BloodHoundDBInfo{
     [Alias('DBInfo')]
-    Param()
+    Param(
+        [Parameter(Mandatory=$false,Position=1)]
+        [pscredential]$neo4jCredential
+    )
+    if ($null -eq $neo4jCredential){
+        $neo4jCredential = Get-Credential 
+    }
     Write-Verbose "[+][$(Time)] Fetching DB Info..."
     [PSCustomObject]@{
-        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -expand Data)[0]
-        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -expand Data)[0] 
-        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -expand Data)[0]
-        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -expand Data)[0]
-        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -expand Data)[0]
-        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -expand Data)[0]
-        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -expand Data)[0]
-        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -expand Data)[0]
-        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Expand Data)[0]
-        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -expand Data)[0]
+        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0] 
+        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -expand Data -neo4jCredential $neo4jCredential)[0]
+        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Expand Data -neo4jCredential $neo4jCredential)[0]
+        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -expand Data -neo4jCredential $neo4jCredential)[0]
         }}
 #####End
 
@@ -188,19 +252,22 @@ Function Invoke-DataDog{
     [OutputType([Datadog])]
     Param(
         # Name of the Group to Scan
-        [Parameter(Mandatory=1,ValueFromPipeline=$true)][Alias('Group')][String[]]$Name,
+        [Parameter(Mandatory=1,ValueFromPipeline=$true,Position=1)][Alias('Group')][String[]]$Name,
         # Limit number of returned path
-        [Parameter(Mandatory=0)][Int]$Limit=1000,
+        [Parameter(Mandatory=0,Position=2)][Int]$Limit=1000,
         # Scan Type
-        [Parameter(Mandatory=0)][ScanType]$ScanType="Advanced",
+        [Parameter(Mandatory=0,Position=3)][ScanType]$ScanType="Advanced",
         # Switch to All Shortest Paths
-        [Parameter(Mandatory=0)][Switch]$AllShortest,
+        [Parameter(Mandatory=0,Position=4)][Switch]$AllShortest,
         # Switch Quick [less accurate]
-        [Parameter(Mandatory=0)][Switch]$Quick,
+        [Parameter(Mandatory=0,Position=5)][Switch]$Quick,
         # Specify user origin
-        [Parameter(Mandatory=0)][String]$UserDomain
+        [Parameter(Mandatory=0,Position=6)][String]$UserDomain,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
         )
     Begin{
+        #TODO: add azure edges
         $EdgeList = Switch("$ScanType".ToUpper()){
             MINI     {":MemberOf|AdminTo|HasSIDHistory"}
             MINIX    {":MemberOf|AdminTo|HasSIDHistory|CanRDP|CanPSRemote|ExecuteDCOM"}
@@ -218,12 +285,16 @@ Function Invoke-DataDog{
         if($AllShortest){$q='allShortestPaths'}Else{$q='shortestPath'}
         # If Quick [No Order]
         if($Quick){$order=$Null}Else{$order='ORDER BY LENGTH(p) '}
+        if($null -eq $neo4jCredential){
+            $neo4jCredential = Get-Credential
         }
+        $header = createNeo4jHeaders -neo4jCredential $neo4jCredential
+    }
     Process{
         Foreach($Obj in $Name){
             # Get Group
             Write-Verbose "[?][$(Time)] Querying Group by Name"
-            $Grp = Cypher "MATCH (g:Group {name:'$Obj'}) RETURN g" | select Name,objectid,description
+            $Grp = Cypher "MATCH (g:Group {name:'$Obj'}) RETURN g" -neo4jCredential $neo4jCredential | select Name,objectid,description
             # If Group not found
             if(-NOT $Grp.name){
                 Write-Warning "[!][$(Time)] OBJECT NOT FOUND: $Obj`r`n"
@@ -240,17 +311,17 @@ Function Invoke-DataDog{
                 # Direct Members
                 Write-Verbose "[.][$(Time)] Querying Direct Member Count"
                 $Cypher1   = "MATCH (m:User)$WhereDom MATCH p=shortestPath((m)-[r:MemberOf*1]->(n:Group {name:'$NmE'})) RETURN COUNT(m)"
-                $DirectMbr = (Cypher $Cypher1 -expand data)|Select -first 1
+                $DirectMbr = (Cypher $Cypher1 -expand data -neo4jCredential $neo4jCredential)|Select -first 1
                 Write-Verbose "[.][$(Time)] > Direct Member: $DirectMbr"
                 # Unrolled Members
                 Write-Verbose "[.][$(Time)] Querying Nested Member Count"
                 $cypher2   = "MATCH (m:User)$WhereDom MATCH p=shortestPath((m)-[r:MemberOf*1..]->(n:Group {name:'$NmE'})) RETURN COUNT(m)"
-                $UnrollMbr =(Cypher $Cypher2 -expand data)|Select -first 1
+                $UnrollMbr =(Cypher $Cypher2 -expand data -neo4jCredential $neo4jCredential)|Select -first 1
                 Write-Verbose "[.][$(Time)] > Nested Member: $($UnrollMbr-$DirectMbr)"
                 # Shortest Path
                 $Cypher3   = "MATCH (m:User)$WhereDom MATCH p=$q((m)-[r$EdgeList*1..]->(n:Group {name:'$NmE'})) RETURN p ${Order}LIMIT $Limit"
                 Write-Verbose "[.][$(Time)] Querying User Shortest Paths"
-                $RawData  = Cypher $Cypher3 -expand data
+                $RawData  = Cypher $Cypher3 -expand data -neo4jCredential $neo4jCredential
                 # User Path Count
                 $PathCount = $RawData.count
                 $UserCount = ($RawData.start|sort -unique).count
@@ -261,7 +332,7 @@ Function Invoke-DataDog{
                 Write-Verbose "[.][$(Time)] Mesuring Weight"
                 $NodeWeight = @(Foreach($x in $AllNodeU){
                     #  Name
-                    $Obj=irm $x.Name -Verbose:$false
+                    $Obj=irm $x.Name -Headers $header -Verbose:$false
                     # Dist
                     $Path = $RawData | ? {$_.nodes -match $x.name} | select -first 1
                     $Step = $Path.Nodes.Count-1
@@ -332,8 +403,13 @@ Function Invoke-WatchDog{
         # Switch Quick [less accurate]
         [Parameter(Mandatory=0)][Switch]$Quick,
         # Specify user origin
-        [Parameter(Mandatory=0)][String]$UserDomain
+        [Parameter(Mandatory=0)][String]$UserDomain,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
         )
+    if($null -eq $neo4jCredential){
+        $neo4jCredential = Get-Credential
+    }
     # Domain to upper
     $Domain = $Domain.ToUpper()
     ## foreach in list ##
@@ -341,16 +417,16 @@ Function Invoke-WatchDog{
         # Get Group
         $ObjID = if($Obj.SID -match '^S-1-5-32-'){"$Domain"+"-$($Obj.SID)"}else{"$($Obj.SID)"}
         Write-Verbose "[?][$(Time)] Searching Name by SID"
-        $Grp = Cypher "MATCH (g:Group {domain:'$Domain'}) WHERE g.objectid =~ '(?i)$ObjID' RETURN g" | select Name,objectid,description
+        $Grp = Cypher "MATCH (g:Group {domain:'$Domain'}) WHERE g.objectid =~ '(?i)$ObjID' RETURN g" -neo4jCredential $neo4jCredential | select Name,objectid,description
         # If Group not found
         if(-NOT $Grp.objectid){
             Write-Warning  "[!][$(Time)] OBJECT NOT FOUND: $($Obj.Name)`r`n"
             }
         # If Group found
-        else{DataDog $Grp.name -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain}
+        else{DataDog $Grp.name -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -neo4jCredential $neo4jCredential}
         }
     ## If Extra ##
-    if($ExtraGroup){$ExtraGroup|DataDog -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain}     
+    if($ExtraGroup){$ExtraGroup|DataDog -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -neo4jCredential $neo4jCredential}     
     }
 #End
 
@@ -419,20 +495,24 @@ Function Invoke-ReportDog{
         [Parameter(ValueFromPipeline=1)][DataDog[]]$Data,
         [Parameter()][String]$File,
         [Parameter()][Switch]$NoDBInfo,
-        [Parameter()][Switch]$NoTotal
+        [Parameter()][Switch]$NoTotal,
+        [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
         )
     Begin{
         # Empty Collector
         [Collections.ArrayList]$Total=@()
         # If DB Info [Default]
         if(-Not$NoDBInfo){
+            if ($null -eq $neo4jCredential){
+                $neo4jCredential = Get-Credential
+            }
             # DB Info
 "##############################
 
 ------------------------------
 # DB Info                    #
 ------------------------------
-$((Get-BloodHoundDBInfo|Out-String).trim())
+$((Get-BloodHoundDBInfo -neo4jCredential $neo4jCredential |Out-String).trim())
 
 ##############################"
         }}
