@@ -267,7 +267,6 @@ Function Invoke-DataDog{
         [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
         )
     Begin{
-        #TODO: add azure edges
         $EdgeList = Switch("$ScanType".ToUpper()){
             MINI     {":MemberOf|AdminTo|HasSIDHistory"}
             MINIX    {":MemberOf|AdminTo|HasSIDHistory|CanRDP|CanPSRemote|ExecuteDCOM"}
@@ -341,7 +340,7 @@ Function Invoke-DataDog{
                     $W=$X|select -expand Count
                     # Out
                     [PScustomObject]@{
-                        Type     = $Obj.metadata.labels[1]
+                        Type     = if($Obj.metadata.labels.count -gt 1){($Obj.metadata.labels | ? {$_ -ne 'Base'})} else{$Obj.metadata.labels[0]}
                         Name     = $Obj.data.name
                         Distance = ($Path.Nodes.Count)-$Step-1
                         Weight   = $W
@@ -508,6 +507,11 @@ Function Invoke-ReportDog{
             }
             # DB Info
 "##############################
+------------------------------
+# Reference                  #
+------------------------------
+weight = total number of times a node appears in paths to the target
+impact = % of total weight
 
 ------------------------------
 # DB Info                    #
