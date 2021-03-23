@@ -205,6 +205,66 @@ function Invoke-Cypher{
 
 ###########################################################
 
+function Get-NodeInfo{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$NodeName,
+        [Parameter(Mandatory=$true,Position=2)][string]$NodeLabel,
+        [Parameter(Mandatory=$false,Position=3)][string]$OutDir,
+        [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
+    )
+    begin{
+        $Header = createNeo4jHeaders -neo4jCredential $neo4jCredential
+        $nodeInfo = @{}
+    }
+    process{
+        # get node info
+        $node = Cypher -Query "match (n:$NodeLabel {name:`"$NodeName`"}) return n" -Server $Server -Port $Port -neo4jCredential $neo4jCredential -Expand data
+        $nodeLabel = $node.metadata.labels | ? {$_ -ne 'Base'}
+        $nodeId = $node.metadata.id
+        $nodeInfo.Add("Properties",$node.data)
+        $nodeInfo.Add("Label",$nodeLabel)
+        $nodeInfo.Add("Edges",@())
+
+        # get node relationship info
+        $relationships = irm -Method Get -Uri $node.all_relationships -Headers $Header
+        foreach($relationship in $relationships){
+            $edge = @{"Type"=$relationship.metadata.type;"Properties"=$relationship.data}
+            if ($relationship.start.EndsWith($nodeId)){
+                $edge.Add('Start_objectid',$nodeInfo.Properties.objectid)
+                $edge.Add('Start_label',$nodeInfo.Label)
+            }
+            else {
+                $start_obj = irm -Method Get -Uri $relationship.start -Headers $Header
+                $edge.Add('Start_objectid',$start_obj.data.objectid)
+                $edge.Add('Start_label',($start_obj.metadata.labels | ? {$_ -ne 'Base'}))
+            }
+            if ($relationship.end.EndsWith($nodeId)){
+                $edge.Add('End_objectid',$nodeInfo.Properties.objectid)
+                $edge.Add('End_label',$nodeInfo.Label)
+            }
+            else{
+                $end_obj = irm -Method Get -Uri $relationship.end -Headers $Header
+                $edge.Add('End_objectid',$end_obj.data.objectid)
+                $edge.Add('End_label',($end_obj.metadata.labels | ? {$_ -ne 'Base'}))
+            }
+            $nodeInfo.Edges += $edge
+        }
+    }
+    end{
+        if ($null -ne $OutDir -and $OutDir.length -gt 1){
+            $outfile = "{0}\{1}_nodeinfo.json" -f $outDir.trim("\"), $NodeName
+            Out-File -FilePath $OutFile -InputObject ($nodeInfo | Convertto-Json)
+        }
+        else{
+            return $nodeInfo
+        }
+    }
+}
+
 <#
 .Synopsis
    BloodHound DB Info
