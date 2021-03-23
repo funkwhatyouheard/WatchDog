@@ -217,6 +217,12 @@ function Get-NodeInfo{
         [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
     )
     begin{
+        if ($null -ne $OutDir -and $outDir.Length -gt 1){
+            $OutDir = "{0}\DetachedNodes" -f $OutDir.Trim("\")
+            if ((Test-Path $OutDir) -ne $true){
+                New-Item -Path $OutDir -ItemType Directory
+            }
+        }
         $Header = createNeo4jHeaders -neo4jCredential $neo4jCredential
         $nodeInfo = @{}
     }
@@ -256,13 +262,134 @@ function Get-NodeInfo{
     }
     end{
         if ($null -ne $OutDir -and $OutDir.length -gt 1){
-            $outfile = "{0}\{1}_nodeinfo.json" -f $outDir.trim("\"), $NodeName
-            Out-File -FilePath $OutFile -InputObject ($nodeInfo | Convertto-Json)
+            $outfile = "{0}\{1}_nodeinfo.json" -f $outDir, $NodeName
+            Out-File -FilePath $OutFile -InputObject ($nodeInfo | Convertto-Json -Depth 20)
+            return $outfile
         }
         else{
             return $nodeInfo
         }
     }
+}
+
+function Remove-Node{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$NodeName,
+        [Parameter(Mandatory=$true,Position=2)][string]$NodeLabel,
+        # Specifying Delete will remove node and all its edges
+        [Parameter(Mandatory=$true,Position=3)][switch]$Delete,
+        [Parameter(Mandatory=$false,Position=4)][string]$OutDir=".\DetachedNodes",
+        [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
+    )
+    begin{
+        #write node info and related edges to disk so it's recoverable
+        $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        $logfile = "{0}\node_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
+        $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel}
+    }
+    process{
+        $query = "MATCH (n:$NodeLabel {name:`"$NodeName`"}) DETACH"
+        if ($Delete){
+            $log.Operation += " DELETE"
+            $query += " DELETE"
+        }
+        $query += " n"
+        Cypher -Query $query -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+    }
+    end{
+        $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
+    }
+}
+
+function Import-Node{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$NodeFile,
+        # Specifying Delete will remove node and all its edges
+        [Parameter(Mandatory=$false,Position=2)][switch]$EdgesOnly,
+        [Parameter(Mandatory=$false,Position=3)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=4)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+    )
+    begin{
+        # import the node info... could technically take this from pipeline too
+        $nodeInfo = (Get-Content $NodeFile | ConvertFrom-Json)
+        $logfile = "{0}\node_operations.csv" -f (get-item $NodeFile | select -Property Directory).Directory
+        $log = @{"Operation"="IMPORT";"NodeName"=$nodeInfo.Properties.name;"NodeLabel"=$nodeInfo.Label}
+
+        # generate Node insertion cypher
+        if ($EdgesOnly -eq $false){
+            $log.Operation += " Node and"
+            $propertyNames = ($nodeInfo.Properties | gm | ? {$_.MemberType -eq 'NoteProperty'}).Name
+            $setNodeProps = ""
+            $setNodeArrayProps = "SET "
+            foreach($p in $propertyNames){
+                if ($nodeInfo.Properties.($p).gettype().isarray){
+                    $arrayStr = ""
+                    foreach($e in $nodeInfo.Properties.($p)){
+                        if ($e.gettype().Name -eq 'Boolean' -or $e.gettype().Name -eq 'Int32' -or $e.gettype().Name -eq 'Int64'){
+                            $arrayStr += "{0}," -f $e
+                        }
+                        else{
+                            $arrayStr += "`"{0}`"," -f $e.replace("\","\\")
+                        }
+                    }
+                    $arrayStr.TrimEnd(",")
+                    $setNodeArrayProps += "n.{0} = coalesce(n.{0},[]) + [{1}]," -f $p,$arrayStr
+                }
+                elseif ($nodeInfo.Properties.($p).gettype().Name -eq 'Boolean' -or $nodeInfo.Properties.($p).gettype().Name -eq 'Int32'`
+                 -or $nodeInfo.Properties.($p).gettype().Name -eq 'Int64'){
+                    $setNodeProps += "{0}:{1}," -f $p,$nodeInfo.Properties.($p)
+                }
+                else{
+                    $setNodeProps += "{0}:`"{1}`"," -f $p,$nodeInfo.Properties.($p).replace("\","\\")
+                }
+            }
+            $setNodeProps = $setNodeProps.TrimEnd(",")
+            $setNodeArrayProps = $setNodeArrayProps.TrimEnd(",")
+            $nodeCypher = "MERGE (n:$($nodeInfo.Label) {$setNodeProps})"
+            if ($setNodeArrayProps.Length -gt 1){
+                $nodeCypher += " $setNodeArrayProps"
+            }
+        }
+        
+        # generate Edge insertion cypher
+        $log.Operation += " Edges"
+        $edgeCyphers = @()
+        foreach($e in $nodeInfo.Edges){
+            $set_edge_properties = ""
+            $propertyNames = ($e.Properties | gm | ? {$_.MemberType -eq 'NoteProperty'}).Name
+            foreach($p in $propertyNames){
+                if ($e.Properties.($p).gettype().Name -eq 'Boolean' -or $e.Properties.($p).gettype().Name -eq 'Int32' `
+                 -or $e.Properties.($p).gettype().Name -eq 'Int64'){
+                    $set_edge_properties += "{0}:{1}," -f $p,$e.Properties.($p)
+                }
+                else{
+                    $set_edge_properties += "{0}:`"{1}`"," -f $p,$e.Properties.($p).replace("\","\\")
+                }
+            }
+            $set_edge_properties = $set_edge_properties.TrimEnd(",")
+            $edgeCypher = "MATCH (start:$($e.Start_label) {objectid:`"$($e.Start_objectid)`"}), (end:$($e.End_label) {objectid:`"$($e.End_objectid)`"})" + 
+            " MERGE (start)-[r:$($e.Type) {$set_edge_properties}]->(end)"
+            $edgeCyphers += $edgeCypher
+        }
+    }
+    process{
+        if ($EdgesOnly -ne $true){
+            Cypher -Query $nodeCypher -Server $Server -Port $Port -neo4jCredential $neo4jCredential 
+        }
+        # if this ends up being a bottleneck, should be able to pass multiple queries in one request body
+        foreach($q in $edgeCyphers){
+            Cypher -Query $q -Server $Server -Port $Port -neo4jCredential $neo4jCredential 
+        }
+        $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
+    }
+    end{}
 }
 
 <#
