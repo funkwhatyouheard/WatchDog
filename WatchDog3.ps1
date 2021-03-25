@@ -336,7 +336,7 @@ function Remove-Edge{
     begin{
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-EdgeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
-        $logfile = "{0}\graph_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
+        $logfile = "{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory | select parent).parent
         $log = @{"Operation"="DELETE EDGE";"NodeName"=("({0})-[{1}]->({2})" -f $StartNodeName,$EdgeType,$EndNodeName);`
         "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel)}
     }
@@ -431,7 +431,7 @@ function Remove-Node{
     begin{
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
-        $logfile = "{0}\graph_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
+        $logfile = "{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory | select parent).parent
         $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel}
     }
     process{
@@ -462,7 +462,7 @@ function Import-Node{
     begin{
         # import the node info... could technically take this from pipeline too
         $nodeInfo = (Get-Content $NodeFile | ConvertFrom-Json)
-        $logfile = "{0}\graph_operations.csv" -f (get-item $NodeFile | select -Property Directory).Directory
+        $logfile = "{0}\graph_operations.csv" -f ((get-item $NodeFile | select -Property Directory).Directory | select parent).parent
         $log = @{"Operation"="IMPORT";"NodeName"=$nodeInfo.Properties.name;"NodeLabel"=$nodeInfo.Label}
 
         # generate Node insertion cypher
