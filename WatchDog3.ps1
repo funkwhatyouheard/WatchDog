@@ -229,10 +229,9 @@ function Get-NodeInfo{
     process{
         # get node info
         $node = Cypher -Query "match (n:$NodeLabel {name:`"$NodeName`"}) return n" -Server $Server -Port $Port -neo4jCredential $neo4jCredential -Expand data
-        $nodeLabel = $node.metadata.labels | ? {$_ -ne 'Base'}
         $nodeId = $node.metadata.id
         $nodeInfo.Add("Properties",$node.data)
-        $nodeInfo.Add("Label",$nodeLabel)
+        $nodeInfo.Add("Label",$node.metadata.labels)
         $nodeInfo.Add("Edges",@())
 
         # get node relationship info
@@ -246,7 +245,7 @@ function Get-NodeInfo{
             else {
                 $start_obj = irm -Method Get -Uri $relationship.start -Headers $Header
                 $edge.Add('Start_objectid',$start_obj.data.objectid)
-                $edge.Add('Start_label',($start_obj.metadata.labels | ? {$_ -ne 'Base'}))
+                $edge.Add('Start_label',$start_obj.metadata.labels)
             }
             if ($relationship.end.EndsWith($nodeId)){
                 $edge.Add('End_objectid',$nodeInfo.Properties.objectid)
@@ -255,7 +254,7 @@ function Get-NodeInfo{
             else{
                 $end_obj = irm -Method Get -Uri $relationship.end -Headers $Header
                 $edge.Add('End_objectid',$end_obj.data.objectid)
-                $edge.Add('End_label',($end_obj.metadata.labels | ? {$_ -ne 'Base'}))
+                $edge.Add('End_label',$end_obj.metadata.labels)
             }
             $nodeInfo.Edges += $edge
         }
@@ -352,7 +351,7 @@ function Import-Node{
             }
             $setNodeProps = $setNodeProps.TrimEnd(",")
             $setNodeArrayProps = $setNodeArrayProps.TrimEnd(",")
-            $nodeCypher = "MERGE (n:$($nodeInfo.Label) {$setNodeProps})"
+            $nodeCypher = "MERGE (n:$($nodeInfo.Label -join ":") {$setNodeProps})"
             if ($setNodeArrayProps.Length -gt 1){
                 $nodeCypher += " $setNodeArrayProps"
             }
@@ -374,7 +373,7 @@ function Import-Node{
                 }
             }
             $set_edge_properties = $set_edge_properties.TrimEnd(",")
-            $edgeCypher = "MATCH (start:$($e.Start_label) {objectid:`"$($e.Start_objectid)`"}), (end:$($e.End_label) {objectid:`"$($e.End_objectid)`"})" + 
+            $edgeCypher = "MATCH (start:$($e.Start_label -join ":") {objectid:`"$($e.Start_objectid)`"}), (end:$($e.End_label -join ":") {objectid:`"$($e.End_objectid)`"})" + 
             " MERGE (start)-[r:$($e.Type) {$set_edge_properties}]->(end)"
             $edgeCyphers += $edgeCypher
         }
