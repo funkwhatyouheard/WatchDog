@@ -205,6 +205,150 @@ function Invoke-Cypher{
 
 ###########################################################
 
+function Backup-Neo4jDB {
+    param(
+        [Parameter(Mandatory=$true,Position=1)]
+        [string]$Neo4jInstallDir,
+
+        [Parameter(Mandatory=$false,Position=2)]
+        [string]$DBName = "BloodHoundExampleDB"
+    )
+    begin{
+        $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
+        $db = "{0}\{1}.graphdb" -f $dbDir, $DBName.TrimEnd(".graphdb")
+        $date = (get-date)
+        $timestamp = "{0}_{1}_{2}_{3}{4}{5}" -f $date.Month, $date.Day, $date.Year, $date.Hour, $date.Minute, $date.Second
+        $backupDir = "{0}\backup_{1}" -f $dbDir.TrimEnd("\"), $timestamp
+        
+    }
+    process{
+        if ((Test-Path $backupDir) -ne $true){
+            New-Item -Path $backupDir -Type Directory
+        }
+        Copy-Item -Path $db -Destination $backupDir -Recurse
+    }
+    end{
+        return "{0}\{1}.graphdb" -f $backupDir, $DBName
+    }
+}
+
+function Restore-Neo4jDB {
+    param(
+        [Parameter(Mandatory=$true,Position=1)]
+        [string]$Neo4jInstallDir,
+
+        [Parameter(Mandatory=$false,Position=2)]
+        [string]$DBName = "BloodHoundExampleDB",
+
+        [Parameter(Mandatory=$true,Position=3)]
+        [string]$BackupDB
+    )
+    begin{
+        #RUN AS ADMIN TO FORCE STOP/START THE SERVICE OR IT WILL FAIL
+        $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
+        $currDB = "{0}\{1}.graphdb" -f $dbDir, $DBName
+    }
+    process{
+        try{
+            Stop-Service -Name neo4j -Force -ErrorAction Stop
+            Remove-Item -Path $currDB -Recurse -Force -ErrorAction Stop
+            Copy-Item -Path $BackupDB -Destination $dbDir -Recurse -Force -ErrorAction Stop
+            Start-Service -Name neo4j -ErrorAction Stop
+        }
+        catch{
+            Write-Error "Failed to restore database, ensure that you are running in an administrative prompt"
+        }
+    }
+    end{}
+}
+
+function Get-EdgeInfo{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$StartNodeName,
+        [Parameter(Mandatory=$true,Position=2)][string]$StartNodeLabel,
+        [Parameter(Mandatory=$true,Position=3)][string]$EdgeType,
+        [Parameter(Mandatory=$true,Position=4)][string]$EndNodeName,
+        [Parameter(Mandatory=$true,Position=5)][string]$EndNodeLabel,
+        [Parameter(Mandatory=$false,Position=6)][string]$OutDir,
+        [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
+    )
+    begin{
+        if ($null -ne $OutDir -and $outDir.Length -gt 1){
+            $OutDir = "{0}\RemovedEntities\Edges" -f $OutDir.Trim("\")
+            if ((Test-Path $OutDir) -ne $true){
+                New-Item -Path $OutDir -ItemType Directory
+            }
+        }
+        $Header = createNeo4jHeaders -neo4jCredential $neo4jCredential
+        $pathInfo = @{}
+    }
+    process{
+        # get node and edge info
+        $path = Cypher -Query "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) return labels(n),n,type(r),r,labels(m),m" `
+            -Server $Server -Port $Port -neo4jCredential $neo4jCredential -Expand data
+
+        $start = @{"Label"=$path[0];"NodeInfo"=$path[1]}
+        $startProperties = irm -method get -uri $start.NodeInfo.properties -headers $Header 
+        $startNode = @{"Label"=$start.Label;"Properties"=$startProperties}
+        $pathInfo.Add("Start",$startNode)
+
+        $edge = @{"Type"=$path[2];"EdgeInfo"=$path[3]}
+        $edgeProperties = irm -method get -uri $edge.EdgeInfo.properties -headers $Header 
+        $relationship = @{"Type"=$edge.Type;"Properties"=$edgeProperties}
+        $pathInfo.Add("Edge",$relationship)
+
+        $end = @{"Label"=$path[4];"NodeInfo"=$path[5]}
+        $endProperties = irm -method get -uri $end.NodeInfo.properties -headers $Header 
+        $endNode = @{"Label"=$end.Label;"Properties"=$endProperties}
+        $pathInfo.Add("End",$endNode)
+    }
+    end{
+        if ($null -ne $OutDir -and $OutDir.length -gt 1){
+            $rel = "({0})-{1}-({2})" -f $pathInfo.Start.Properties.name, $pathInfo.Edge.Type, $pathInfo.End.Properties.name
+            $outfile = "{0}\{1}.json" -f $outDir, $rel
+            Out-File -FilePath $OutFile -InputObject ($pathInfo | Convertto-Json -Depth 20)
+            return $outfile
+        }
+        else{
+            return $pathInfo
+        }
+    }
+}
+
+function Remove-Edge{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$StartNodeName,
+        [Parameter(Mandatory=$true,Position=2)][string]$StartNodeLabel,
+        [Parameter(Mandatory=$true,Position=3)][string]$EdgeType,
+        [Parameter(Mandatory=$true,Position=4)][string]$EndNodeName,
+        [Parameter(Mandatory=$true,Position=5)][string]$EndNodeLabel,
+        [Parameter(Mandatory=$false,Position=6)][string]$OutDir,
+        [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
+    )
+    begin{
+        #write node info and related edges to disk so it's recoverable
+        $filepath = Get-EdgeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        $logfile = "{0}\graph_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
+        $log = @{"Operation"="DELETE EDGE";"NodeName"=("({0})-[{1}]->({2})" -f $StartNodeName,$EdgeType,$EndNodeName);`
+        "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel)}
+    }
+    process{
+        $query = "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) DELETE r"
+        Cypher -Query $query -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+    }
+    end{
+        $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
+    }
+}
+
 function Get-NodeInfo{
     param(
         [Parameter(Mandatory=$true,Position=1)][string]$NodeName,
@@ -218,7 +362,7 @@ function Get-NodeInfo{
     )
     begin{
         if ($null -ne $OutDir -and $outDir.Length -gt 1){
-            $OutDir = "{0}\DetachedNodes" -f $OutDir.Trim("\")
+            $OutDir = "{0}\RemovedEntities\Nodes" -f $OutDir.Trim("\")
             if ((Test-Path $OutDir) -ne $true){
                 New-Item -Path $OutDir -ItemType Directory
             }
@@ -261,7 +405,7 @@ function Get-NodeInfo{
     }
     end{
         if ($null -ne $OutDir -and $OutDir.length -gt 1){
-            $outfile = "{0}\{1}_nodeinfo.json" -f $outDir, $NodeName
+            $outfile = "{0}\{1}.json" -f $outDir, $NodeName
             Out-File -FilePath $OutFile -InputObject ($nodeInfo | Convertto-Json -Depth 20)
             return $outfile
         }
@@ -277,7 +421,7 @@ function Remove-Node{
         [Parameter(Mandatory=$true,Position=2)][string]$NodeLabel,
         # Specifying Delete will remove node and all its edges
         [Parameter(Mandatory=$true,Position=3)][switch]$Delete,
-        [Parameter(Mandatory=$false,Position=4)][string]$OutDir=".\DetachedNodes",
+        [Parameter(Mandatory=$false,Position=4)][string]$OutDir=".\RemovedEntities",
         [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
@@ -287,7 +431,7 @@ function Remove-Node{
     begin{
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
-        $logfile = "{0}\node_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
+        $logfile = "{0}\graph_operations.csv" -f (get-item $filepath | select -Property Directory).Directory
         $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel}
     }
     process{
@@ -318,7 +462,7 @@ function Import-Node{
     begin{
         # import the node info... could technically take this from pipeline too
         $nodeInfo = (Get-Content $NodeFile | ConvertFrom-Json)
-        $logfile = "{0}\node_operations.csv" -f (get-item $NodeFile | select -Property Directory).Directory
+        $logfile = "{0}\graph_operations.csv" -f (get-item $NodeFile | select -Property Directory).Directory
         $log = @{"Operation"="IMPORT";"NodeName"=$nodeInfo.Properties.name;"NodeLabel"=$nodeInfo.Label}
 
         # generate Node insertion cypher
@@ -390,6 +534,8 @@ function Import-Node{
     }
     end{}
 }
+
+
 
 <#
 .Synopsis
