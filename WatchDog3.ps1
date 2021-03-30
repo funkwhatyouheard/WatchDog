@@ -388,7 +388,8 @@ function Remove-Edge{
             $backup = "no backup"
         }
         #write node info and related edges to disk so it's recoverable
-        $filepath = Get-EdgeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        $filepath = Get-EdgeInfo -StartNodeName $StartNodeName -StartNodeLabel $StartNodeLabel -EdgeType $EdgeType -EndNodeName $EndNodeName -EndNodeLabel $EndNodeLabel `
+            -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
         $logfile = ("{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory.parent.fullname))
         $log = @{"Operation"="DELETE EDGE";"NodeName"=("({0})-[{1}]->({2})" -f $StartNodeName,$EdgeType,$EndNodeName);`
         "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel);"Backup"=$backup}
