@@ -207,18 +207,21 @@ function Invoke-Cypher{
 
 function Backup-Neo4jDB {
     param(
-        [Parameter(Mandatory=$true,Position=1)]
+        [Parameter(Mandatory=$false,Position=1)]
         [string]$Neo4jInstallDir,
 
         [Parameter(Mandatory=$false,Position=2)]
         [string]$DBName = "BloodHoundExampleDB"
     )
     begin{
+        if ($null -eq $Neo4jInstallDir -or $Neo4jInstallDir.Length -eq 0){
+            $Neo4jInstallDir = ((gwmi win32_service | ?{$_.Name -eq "Neo4j"} | select PathName).pathname -split "bin\\tools\\prunsrv-[a-zA-A0-9]+?.exe")[0]
+        }
         $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
         $db = "{0}\{1}.graphdb" -f $dbDir, $DBName.TrimEnd(".graphdb")
         $date = (get-date)
         $timestamp = "{0}_{1}_{2}_{3}{4}{5}" -f $date.Month, $date.Day, $date.Year, $date.Hour, $date.Minute, $date.Second
-        $backupDir = "{0}\backup_{1}" -f $dbDir.TrimEnd("\"), $timestamp
+        $backupDir = "{0}\backups\{1}" -f $dbDir.TrimEnd("\"), $timestamp
         
     }
     process{
@@ -232,18 +235,55 @@ function Backup-Neo4jDB {
     }
 }
 
+function Get-Neo4jBackups {
+    param(
+        [Parameter(Mandatory=$false,Position=1)]
+        [string]$BackupDir
+    )
+    begin{
+        if ($null -eq $BackupDir -or $backupDir.Length -eq 0){
+            $installDir = ((gwmi win32_service | ?{$_.Name -eq "Neo4j"} | select PathName).pathname -split "bin\\tools\\prunsrv-[a-zA-A0-9]+?.exe")[0]
+            $BackupDir = ("{0}\data\databases\backups" -f $installDir)
+        }
+        $info = @()
+    }
+    process{
+        $backups = (gci $BackupDir -Directory).FullName
+        foreach($b in $backups){
+            $db = (gci $b -Directory).Name
+            $info += @{"Path"=$b;"DB"=$db}
+        }
+        $info = $info | Sort-Object -Property Path
+    }
+    end{
+        return $info
+    }
+}
+
 function Restore-Neo4jDB {
     param(
-        [Parameter(Mandatory=$true,Position=1)]
+        [Parameter(Mandatory=$false,Position=1)]
         [string]$Neo4jInstallDir,
 
         [Parameter(Mandatory=$false,Position=2)]
         [string]$DBName = "BloodHoundExampleDB",
 
-        [Parameter(Mandatory=$true,Position=3)]
+        [Parameter(Mandatory=$false,Position=3)]
         [string]$BackupDB
     )
     begin{
+        if ($null -eq $Neo4jInstallDir -or $Neo4jInstallDir.Length -eq 0){
+            $Neo4jInstallDir = ((gwmi win32_service | ?{$_.Name -eq "Neo4j"} | select PathName).pathname -split "bin\\tools\\prunsrv-[a-zA-A0-9]+?.exe")[0]
+        }
+        if ($null -eq $BackupDB -or $BackupDB.Length -eq 0){
+            $backups = Get-Neo4jBackups
+            if ($backups.gettype().Name -eq 'Hashtable'){
+                $BackupDB = "{0}\{1}" -f $backups.Path, $backups.DB
+            }
+            else{
+                $BackupDB = "{0}\{1}" -f $backups[0].Path, $backups[0].DB
+            }            
+        }
         #RUN AS ADMIN TO FORCE STOP/START THE SERVICE OR IT WILL FAIL
         $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
         $currDB = "{0}\{1}.graphdb" -f $dbDir, $DBName
@@ -331,14 +371,27 @@ function Remove-Edge{
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential,
+        [Parameter(Mandatory=$false,Position=10)][switch]$NoBackup
     )
     begin{
+        if ($NoBackup -eq $false){
+            $backups = Get-Neo4jBackups
+            if ($backups.gettype().Name -eq 'Hashtable'){
+                $backup = "{0}\{1}" -f $backups.Path, $backups.DB
+            }
+            else{
+                $backup = "{0}\{1}" -f $backups[0].Path, $backups[0].DB
+            }   
+        }
+        else {
+            $backup = "no backup"
+        }
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-EdgeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
-        $logfile = "{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory | select parent).parent
+        $logfile = ("{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory.parent.fullname))
         $log = @{"Operation"="DELETE EDGE";"NodeName"=("({0})-[{1}]->({2})" -f $StartNodeName,$EdgeType,$EndNodeName);`
-        "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel)}
+        "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel);"Backup"=$backup}
     }
     process{
         $query = "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) DELETE r"
@@ -426,13 +479,26 @@ function Remove-Node{
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential,
+        [Parameter(Mandatory=$false,Position=8)][switch]$NoBackup
     )
     begin{
+        if ($NoBackup -eq $false){
+            $backups = Get-Neo4jBackups
+            if ($backups.gettype().Name -eq 'Hashtable'){
+                $backup = "{0}\{1}" -f $backups.Path, $backups.DB
+            }
+            else{
+                $backup = "{0}\{1}" -f $backups[0].Path, $backups[0].DB
+            }   
+        }
+        else{
+            $backup = "no backup"
+        }
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
-        $logfile = "{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory | select parent).parent
-        $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel}
+        $logfile = ("{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory.parent.fullname))
+        $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel;"Backup"=$backup}
     }
     process{
         $query = "MATCH (n:$NodeLabel {name:`"$NodeName`"}) DETACH"
@@ -448,6 +514,7 @@ function Remove-Node{
     }
 }
 
+# this doesn't quick work... and I'm not sure why. Node gets reinserted and looks the same, but weights are coming out different
 function Import-Node{
     param(
         [Parameter(Mandatory=$true,Position=1)][string]$NodeFile,
@@ -463,7 +530,7 @@ function Import-Node{
         # import the node info... could technically take this from pipeline too
         $nodeInfo = (Get-Content $NodeFile | ConvertFrom-Json)
         $logfile = "{0}\graph_operations.csv" -f ((get-item $NodeFile | select -Property Directory).Directory | select parent).parent
-        $log = @{"Operation"="IMPORT";"NodeName"=$nodeInfo.Properties.name;"NodeLabel"=$nodeInfo.Label}
+        $log = @{"Operation"="IMPORT";"NodeName"=$nodeInfo.Properties.name;"NodeLabel"=$nodeInfo.Label;;"Backup"=""}
 
         # generate Node insertion cypher
         if ($EdgesOnly -eq $false){
@@ -535,7 +602,55 @@ function Import-Node{
     end{}
 }
 
+function Get-GeneralRiskStats{
+    param(
+        [Parameter(Mandatory=$true,Position=1)][string]$GroupName,
+        [Parameter(Mandatory=$false,Position=2)][switch]$NoDomainRestriction,
+        [Parameter(Mandatory=$false,Position=3)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=4)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+    )
+    begin{
+        if ($NoDomainRestriction){
+            $filter = ""
+        }
+        else{
+            $domain = $GroupName.split("@")[1]
+            $filter = " {domain:'$domain'}"
+        }
+        $totalUsersQuery = ("MATCH (totalUsers:User{0}) return count(totalUsers)" -f $filter)
+        $usersWithPathQuery = ("MATCH shortestPath((pathToDAUsers:User{0})-[*1..]->(g:Group {{name:'{1}'}})) where pathToDAUsers<>g return COUNT(DISTINCT(pathToDAUsers))" -f $filter, $GroupName)
+        $totalComputersQuery = ("MATCH (totalComputers:Computer{0}) return count(distinct(totalComputers))" -f $filter)
+        $computersWithPathQuery = ("MATCH shortestPath((pathToDAComputers:Computer{0})-[*1..]->(g:Group {{name:'{1}'}})) WHERE pathToDAComputers<>g return COUNT(DISTINCT(pathToDAComputers))" -f $filter, $GroupName)
+        $averageUserPathLengthQuery = ("MATCH p = shortestPath((n{0}{1})-[*1..]->(g:Group {{name:'{2}'}})) where n<>g RETURN toInteger(AVG(LENGTH(p))) as avgPathLength" -f ":User",$filter,$GroupName)
+        $averageComputerPathLengthQuery = ("MATCH p = shortestPath((n{0}{1})-[*1..]->(g:Group {{name:'{2}'}})) where n<>g RETURN toInteger(AVG(LENGTH(p))) as avgPathLength" -f ":Computer",$filter,$GroupName)
+        $averagePathLengthQuery = ("MATCH p = shortestPath((n{0}{1})-[*1..]->(g:Group {{name:'{2}'}})) where n<>g RETURN toInteger(AVG(LENGTH(p))) as avgPathLength" -f "",$filter,$GroupName)
+    }
+    process{
+        $totalUsers = [int](Cypher -Query $totalUsersQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $usersWithPath = [int](Cypher -Query $usersWithPathQuery -neo4jCredential $neo4jCredential -Expand data)[0]
 
+        $totalComputers = [int](Cypher -Query $totalComputersQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $computersWithPath = [int](Cypher -Query $computersWithPathQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+
+        $averagePath = [int](Cypher -Query $averagePathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averageUserPath = [int](Cypher -Query $averageUserPathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averageComputerPath = [int](Cypher -Query $averageComputerPathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+
+        $percentUsers = 100*($usersWithPath/$totalUsers)
+        $percentComputers = 100*($computersWithPath/$totalComputers)
+    }
+    end{
+        $stats = [ordered]@{"Destination"=$GroupName;`
+            "TotalUsers"=$totalUsers; "UsersWithPath"=$usersWithPath; "PercentageOfUsersWithPath"=$percentUsers; `
+            "TotalComputers"=$totalComputers; "ComputersWithPath"=$computersWithPath; "PercentComputersWithPath"=$percentComputers;`
+            "AveragePathLength"=$averagePath; "AverageUserPathLength"=$averageUserPath; "AverageComputerPath"=$averageComputerPath
+        }
+        return $stats
+    }
+}
 
 <#
 .Synopsis
