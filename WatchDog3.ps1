@@ -655,9 +655,9 @@ function Get-GeneralRiskStats{
     }
     end{
         $stats = [ordered]@{"Destination"=$GroupName;`
-            "TotalUsers"=$totalUsers; "UsersWithPath"=$usersWithPath; "PercentageOfUsersWithPath"=$percentUsers; `
+            "TotalUsers"=$totalUsers; "UsersWithPath"=$usersWithPath; "PercentUsersWithPath"=$percentUsers; `
             "TotalComputers"=$totalComputers; "ComputersWithPath"=$computersWithPath; "PercentComputersWithPath"=$percentComputers;`
-            "AveragePathLength"=$averagePath; "AverageUserPathLength"=$averageUserPath; "AverageComputerPath"=$averageComputerPath
+            "AveragePathLength"=$averagePath; "AverageUserPathLength"=$averageUserPath; "AverageComputerPathLength"=$averageComputerPath
         }
         return $stats
     }
