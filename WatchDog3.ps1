@@ -317,6 +317,8 @@ function Get-EdgeInfo{
         [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
     )
     begin{
+        $StartNodeName = $StartNodeName.ToUpper()
+        $EndNodeName = $EndNodeName.ToUpper()
         if ($null -ne $OutDir -and $outDir.Length -gt 1){
             $OutDir = "{0}\RemovedEntities\Edges" -f $OutDir.Trim("\")
             if ((Test-Path $OutDir) -ne $true){
@@ -375,6 +377,8 @@ function Remove-Edge{
         [Parameter(Mandatory=$false,Position=10)][switch]$NoBackup
     )
     begin{
+        $StartNodeName = $StartNodeName.ToUpper()
+        $EndNodeName = $EndNodeName.ToUpper()
         if ($NoBackup -eq $false){
             $backups = Get-Neo4jBackups
             if ($backups.gettype().Name -eq 'Hashtable'){
@@ -415,6 +419,7 @@ function Get-NodeInfo{
         [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
     )
     begin{
+        $NodeName = $NodeName.ToUpper()
         if ($null -ne $OutDir -and $outDir.Length -gt 1){
             $OutDir = "{0}\RemovedEntities\Nodes" -f $OutDir.Trim("\")
             if ((Test-Path $OutDir) -ne $true){
@@ -484,6 +489,7 @@ function Remove-Node{
         [Parameter(Mandatory=$false,Position=8)][switch]$NoBackup
     )
     begin{
+        $NodeName = $NodeName.ToUpper()
         if ($NoBackup -eq $false){
             $backups = Get-Neo4jBackups
             if ($backups.gettype().Name -eq 'Hashtable'){
@@ -614,6 +620,7 @@ function Get-GeneralRiskStats{
         [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
     )
     begin{
+        $GroupName = $GroupName.ToUpper()
         if ($NoDomainRestriction){
             $filter = ""
         }
@@ -702,7 +709,7 @@ Function Invoke-DataDog{
         # Name of the Group to Scan
         [Parameter(Mandatory=1,ValueFromPipeline=$true,Position=1)][Alias('Group')][String[]]$Name,
         # Limit number of returned path
-        [Parameter(Mandatory=0,Position=2)][Int]$Limit=1000,
+        [Parameter(Mandatory=0,Position=2)][Int]$Limit=10000,
         # Scan Type
         [Parameter(Mandatory=0,Position=3)][ScanType]$ScanType="Advanced",
         # Switch to All Shortest Paths
@@ -842,7 +849,7 @@ Function Invoke-WatchDog{
         # Add extra Group Names
         [Parameter()][String[]]$ExtraGroup,
         # Limit Number of returned paths
-        [Parameter(Mandatory=0)][Int]$Limit=1000,
+        [Parameter(Mandatory=0)][Int]$Limit=10000,
         # Scan Type
         [Parameter()][ScanType]$ScanType='Advanced',
         # Switch to All Shortest Paths
