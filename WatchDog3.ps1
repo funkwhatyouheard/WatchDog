@@ -612,12 +612,13 @@ function Import-Node{
 function Get-GeneralRiskStats{
     param(
         [Parameter(Mandatory=$true,Position=1)][string]$GroupName,
-        [Parameter(Mandatory=$false,Position=2)][switch]$NoDomainRestriction,
-        [Parameter(Mandatory=$false,Position=3)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=2)][string]$UserComputerDomain,
+        [Parameter(Mandatory=$false,Position=3)][switch]$NoDomainRestriction,
+        [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
         # Port for neo4j
-        [Parameter(Mandatory=$false,Position=4)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
     )
     begin{
         $GroupName = $GroupName.ToUpper()
@@ -625,8 +626,10 @@ function Get-GeneralRiskStats{
             $filter = ""
         }
         else{
-            $domain = $GroupName.split("@")[1]
-            $filter = " {domain:'$domain'}"
+            if ($null -eq $UserComputerDomain -or $UserComputerDomain.Length -eq 0){
+                $UserComputerDomain = $GroupName.split("@")[1]
+            }
+            $filter = " {domain:'$UserComputerDomain'}"
         }
         $totalUsersQuery = ("MATCH (totalUsers:User{0}) return count(totalUsers)" -f $filter)
         $usersWithPathQuery = ("MATCH shortestPath((pathToDAUsers:User{0})-[*1..]->(g:Group {{name:'{1}'}})) where pathToDAUsers<>g return COUNT(DISTINCT(pathToDAUsers))" -f $filter, $GroupName)
