@@ -663,6 +663,33 @@ function Get-GeneralRiskStats{
     }
 }
 
+function Invoke-AllDomainReports {
+    param(
+        [Parameter(Mandatory=$true,Position=1)]
+        [string]$OutputDir,
+        [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
+    )
+    begin{
+        if ($null -eq $neo4jCredential){
+            $neo4jCredential = Get-Credential 
+        }
+        $domains = (Cypher -Query "MATCH (n:Domain) where n.domain is not null return distinct(n.domain)" -neo4jCredential $neo4jCredential -Expand data -Server $Server -Port $Port)
+    }
+    process{
+        foreach($domain in $domains){
+            $d = $domain[0]
+            Invoke-WatchDog -Domain $d -Quick -UserDomain $d -neo4jCredential $cred  | 
+                ReportDog -neo4jCredential $cred >> "$outputDir\$d`_watchdog.txt";
+            Get-GeneralRiskStats -GroupName "DOMAIN ADMINS@$d" -neo4jCredential $cred >> "$outputDir\$d`_general_risk.txt"
+        }
+    }
+    end{}
+}
+
 <#
 .Synopsis
    BloodHound DB Info
