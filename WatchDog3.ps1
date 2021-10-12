@@ -1,4 +1,8 @@
 ﻿###########################################################
+#TODO: 
+#   * need to fix -expand usage for cypher method
+#   * need to fix relationship uri references that were formerly on the response objects
+#   * need to ensure that -expand is working correctly...
 <# 
 ## Instructions ##
 
@@ -174,29 +178,43 @@ function Invoke-Cypher{
         # Query Params [optional]
         [Parameter(Mandatory=$false,Position=2)][Hashtable]$Params,
         # Expand Props [Default to .data.data /  Use -Expand $Null for raw objects]
-        [Parameter(Mandatory=$false,Position=3)][Alias('x')][String[]]$Expand=@('data','data'),
+        [Parameter(Mandatory=$false,Position=3)][Alias('x')][String[]]$Expand=@('results','data'),
+        # Return graph info
+        [Parameter(Mandatory=$false,Position=4)][Switch]$GraphInfo,
         # Server for neo4j
-        [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
         # Port for neo4j
-        [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
+        # Database Name for neo4j
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential
         )
     # Uri 
-    $Uri = "http://$Server`:$Port/db/data/cypher"
+    $Uri = "http://$Server`:$Port/db/$DBName/tx/commit"
     # Header
     $Header= createNeo4jHeaders -neo4jCredential $neo4jCredential
     # Query [spec chars to unicode]
     $Query=$($Query.ToCharArray()|%{$x=[Byte][Char]"$_";if($x-gt191-AND$x-le255){'\u{0:X4}'-f$x}else{$_}})-join''
     # Body
-    if($Params){$Body = @{params=$Params; query=$Query}|Convertto-Json}
-    else{$Body = @{query=$Query}|Convertto-Json}
+    if($Params){$Body = @{"statements"=@(@{"statement"=$Query;"parameters"=$Params})}}
+    else{$Body = @{"statements"=@(@{"statement"=$Query})}}
+    if($GraphInfo){
+        $Body.statements[0].Add("resultDataContents",@("row","graph"))
+    }
+    $Body = $Body | ConvertTo-Json -Depth 10
     # Call
     #Write-Verbose "[+][$(Time)] Querying Database..."
     Write-Verbose "[+][$(Time)] $Query" <#Ckeck $Body if strange chars#>
-    $Reply = Try{Invoke-RestMethod -Uri $Uri -Method Post -Headers $Header -Body $Body -verbose:$false}Catch{$Oops = $Error[0].ErrorDetails.Message}
+    $Reply = Invoke-RestMethod -Uri $Uri -Method Post -Headers $Header -Body $Body -verbose:$false
     # Format obj
-    if($Oops){Write-Warning "$((ConvertFrom-Json $Oops).message)";Return}
+    if($Reply.errors.length -gt 0){
+        $neoErrs = $Reply.errors; 
+        foreach($err in $neoErrs){
+            Write-Warning "$($err.message)"
+        }
+        Return
+    }
     if($Expand){$Expand | %{$Reply = $Reply.$_}} 
     # Output Reply
     if($Reply){Return $Reply}
@@ -313,8 +331,9 @@ function Get-EdgeInfo{
         [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential
     )
     begin{
         $StartNodeName = $StartNodeName.ToUpper()
@@ -325,27 +344,23 @@ function Get-EdgeInfo{
                 New-Item -Path $OutDir -ItemType Directory
             }
         }
-        $Header = createNeo4jHeaders -neo4jCredential $neo4jCredential
         $pathInfo = @{}
     }
     process{
         # get node and edge info
         $path = Cypher -Query "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) return labels(n),n,type(r),r,labels(m),m" `
-            -Server $Server -Port $Port -neo4jCredential $neo4jCredential -Expand data
+            -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';,'row')
 
         $start = @{"Label"=$path[0];"NodeInfo"=$path[1]}
-        $startProperties = irm -method get -uri $start.NodeInfo.properties -headers $Header 
-        $startNode = @{"Label"=$start.Label;"Properties"=$startProperties}
+        $startNode = @{"Label"=$start.Label;"Properties"=$start.NodeInfo}
         $pathInfo.Add("Start",$startNode)
 
         $edge = @{"Type"=$path[2];"EdgeInfo"=$path[3]}
-        $edgeProperties = irm -method get -uri $edge.EdgeInfo.properties -headers $Header 
-        $relationship = @{"Type"=$edge.Type;"Properties"=$edgeProperties}
+        $relationship = @{"Type"=$edge.Type;"Properties"=$edge.EdgeInfo}
         $pathInfo.Add("Edge",$relationship)
 
         $end = @{"Label"=$path[4];"NodeInfo"=$path[5]}
-        $endProperties = irm -method get -uri $end.NodeInfo.properties -headers $Header 
-        $endNode = @{"Label"=$end.Label;"Properties"=$endProperties}
+        $endNode = @{"Label"=$end.Label;"Properties"=$end.NodeInfo}
         $pathInfo.Add("End",$endNode)
     }
     end{
@@ -372,9 +387,10 @@ function Remove-Edge{
         [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential,
-        [Parameter(Mandatory=$false,Position=10)][switch]$NoBackup
+        [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential,
+        [Parameter(Mandatory=$false,Position=11)][switch]$NoBackup
     )
     begin{
         $StartNodeName = $StartNodeName.ToUpper()
@@ -393,14 +409,14 @@ function Remove-Edge{
         }
         #write node info and related edges to disk so it's recoverable
         $filepath = Get-EdgeInfo -StartNodeName $StartNodeName -StartNodeLabel $StartNodeLabel -EdgeType $EdgeType -EndNodeName $EndNodeName -EndNodeLabel $EndNodeLabel `
-            -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+            -OutDir $OutDir -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
         $logfile = ("{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory.parent.fullname))
         $log = @{"Operation"="DELETE EDGE";"NodeName"=("({0})-[{1}]->({2})" -f $StartNodeName,$EdgeType,$EndNodeName);`
         "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel);"Backup"=$backup}
     }
     process{
         $query = "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) DELETE r"
-        Cypher -Query $query -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        Cypher -Query $query -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
     }
     end{
         $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
@@ -415,8 +431,9 @@ function Get-NodeInfo{
         [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=6)][String]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
     )
     begin{
         $NodeName = $NodeName.ToUpper()
@@ -426,38 +443,38 @@ function Get-NodeInfo{
                 New-Item -Path $OutDir -ItemType Directory
             }
         }
-        $Header = createNeo4jHeaders -neo4jCredential $neo4jCredential
         $nodeInfo = @{}
     }
     process{
         # get node info
-        $node = Cypher -Query "match (n:$NodeLabel {name:`"$NodeName`"}) return n" -Server $Server -Port $Port -neo4jCredential $neo4jCredential -Expand data
-        $nodeId = $node.metadata.id
-        $nodeInfo.Add("Properties",$node.data)
-        $nodeInfo.Add("Label",$node.metadata.labels)
+        $node = Cypher -Query "match (n:$NodeLabel {name:`"$NodeName`"})-[r]-(m) return n, labels(n),r,m" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -GraphInfo
+        $nodeId = $node.meta.id
+        $nodeInfo.Add("Properties",$node.row[0])
+        $nodeInfo.Add("Label",$node.row[1])
         $nodeInfo.Add("Edges",@())
+        $relationships = $node.graph.relationships
 
         # get node relationship info
-        $relationships = irm -Method Get -Uri $node.all_relationships -Headers $Header
         foreach($relationship in $relationships){
-            $edge = @{"Type"=$relationship.metadata.type;"Properties"=$relationship.data}
-            if ($relationship.start.EndsWith($nodeId)){
+            $edge = @{"Type"=$relationship.type;"Properties"=$relationship.properties}
+            if ($relationship.startNode -eq $nodeId){
                 $edge.Add('Start_objectid',$nodeInfo.Properties.objectid)
                 $edge.Add('Start_label',$nodeInfo.Label)
             }
             else {
-                $start_obj = irm -Method Get -Uri $relationship.start -Headers $Header
-                $edge.Add('Start_objectid',$start_obj.data.objectid)
-                $edge.Add('Start_label',$start_obj.metadata.labels)
+                ### do need to get the labels for the start node
+                $start_labels = Get-NodeLabels -Id $relationship.startNode -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
+                $edge.Add('Start_objectid',$relationship.startNode)
+                $edge.Add('Start_label',$start_labels)
             }
             if ($relationship.end.EndsWith($nodeId)){
                 $edge.Add('End_objectid',$nodeInfo.Properties.objectid)
                 $edge.Add('End_label',$nodeInfo.Label)
             }
             else{
-                $end_obj = irm -Method Get -Uri $relationship.end -Headers $Header
-                $edge.Add('End_objectid',$end_obj.data.objectid)
-                $edge.Add('End_label',$end_obj.metadata.labels)
+                $end_labels = Get-NodeLabels -Id $relationship.endNode -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
+                $edge.Add('End_objectid',$relationship.endNode)
+                $edge.Add('End_label',$end_labels)
             }
             $nodeInfo.Edges += $edge
         }
@@ -474,6 +491,48 @@ function Get-NodeInfo{
     }
 }
 
+function Get-NodeProperties {
+    param(
+        [Parameter(Mandatory=$true,Position=1)][int]$Id,
+        [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+    )
+    Begin{
+        $Query = "MATCH (n) where id(n) = $Id return n"
+    }
+    Process{
+        $node = Cypher $Query -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row')
+    }
+    End{
+        return $node
+    }
+}
+
+function Get-NodeLabels {
+    param(
+        [Parameter(Mandatory=$true,Position=1)][int]$Id,
+        [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
+        # Port for neo4j
+        [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
+        # Credential for neo4jDB... can exclude if removed requirement for local auth
+        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+    )
+    Begin{
+        $Query = "MATCH (n) where id(n) = $Id return labels(n)"
+    }
+    Process{
+        $node = Cypher $Query -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data')
+    }
+    End{
+        return $node
+    }
+}
+
 function Remove-Node{
     param(
         [Parameter(Mandatory=$true,Position=1)][string]$NodeName,
@@ -484,9 +543,10 @@ function Remove-Node{
         [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential,
-        [Parameter(Mandatory=$false,Position=8)][switch]$NoBackup
+        [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential,
+        [Parameter(Mandatory=$false,Position=9)][switch]$NoBackup
     )
     begin{
         $NodeName = $NodeName.ToUpper()
@@ -503,7 +563,7 @@ function Remove-Node{
             $backup = "no backup"
         }
         #write node info and related edges to disk so it's recoverable
-        $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        $filepath = Get-NodeInfo -NodeName $NodeName -NodeLabel $NodeLabel -OutDir $OutDir -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
         $logfile = ("{0}\graph_operations.csv" -f ((get-item $filepath | select -Property Directory).Directory.parent.fullname))
         $log = @{"Operation"="DETACH";"NodeName"=$NodeName;"NodeLabel"=$NodeLabel;"Backup"=$backup}
     }
@@ -514,14 +574,14 @@ function Remove-Node{
             $query += " DELETE"
         }
         $query += " n"
-        Cypher -Query $query -Server $Server -Port $Port -neo4jCredential $neo4jCredential
+        Cypher -Query $query -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
     }
     end{
         $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
     }
 }
 
-# this doesn't quick work... and I'm not sure why. Node gets reinserted and looks the same, but weights are coming out different
+# this doesn't quite work... and I'm not sure why. Node gets reinserted and looks the same, but weights are coming out different
 function Import-Node{
     param(
         [Parameter(Mandatory=$true,Position=1)][string]$NodeFile,
@@ -530,8 +590,9 @@ function Import-Node{
         [Parameter(Mandatory=$false,Position=3)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=4)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=5)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
     )
     begin{
         # import the node info... could technically take this from pipeline too
@@ -598,11 +659,11 @@ function Import-Node{
     }
     process{
         if ($EdgesOnly -ne $true){
-            Cypher -Query $nodeCypher -Server $Server -Port $Port -neo4jCredential $neo4jCredential 
+            Cypher -Query $nodeCypher -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential 
         }
         # if this ends up being a bottleneck, should be able to pass multiple queries in one request body
         foreach($q in $edgeCyphers){
-            Cypher -Query $q -Server $Server -Port $Port -neo4jCredential $neo4jCredential 
+            Cypher -Query $q -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential 
         }
         $log | foreach-object {[PSCustomObject]$_} | Export-Csv -Path $logfile -Append -NoTypeInformation
     }
@@ -617,8 +678,9 @@ function Get-GeneralRiskStats{
         [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=6)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
     )
     begin{
         $GroupName = $GroupName.ToUpper()
@@ -640,15 +702,15 @@ function Get-GeneralRiskStats{
         $averagePathLengthQuery = ("MATCH p = shortestPath((n{0}{1})-[*1..]->(g:Group {{name:'{2}'}})) where n<>g RETURN toInteger(AVG(LENGTH(p))) as avgPathLength" -f "",$filter,$GroupName)
     }
     process{
-        $totalUsers = [int](Cypher -Query $totalUsersQuery -neo4jCredential $neo4jCredential -Expand data)[0]
-        $usersWithPath = [int](Cypher -Query $usersWithPathQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $totalUsers = [int](Cypher -Query $totalUsersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $usersWithPath = [int](Cypher -Query $usersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
 
-        $totalComputers = [int](Cypher -Query $totalComputersQuery -neo4jCredential $neo4jCredential -Expand data)[0]
-        $computersWithPath = [int](Cypher -Query $computersWithPathQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $totalComputers = [int](Cypher -Query $totalComputersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $computersWithPath = [int](Cypher -Query $computersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
 
-        $averagePath = [int](Cypher -Query $averagePathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
-        $averageUserPath = [int](Cypher -Query $averageUserPathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
-        $averageComputerPath = [int](Cypher -Query $averageComputerPathLengthQuery -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averagePath = [int](Cypher -Query $averagePathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averageUserPath = [int](Cypher -Query $averageUserPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averageComputerPath = [int](Cypher -Query $averageComputerPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
 
         $percentUsers = 100*($usersWithPath/$totalUsers)
         $percentComputers = 100*($computersWithPath/$totalComputers)
@@ -670,21 +732,22 @@ function Invoke-AllDomainReports {
         [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
     )
     begin{
         if ($null -eq $neo4jCredential){
             $neo4jCredential = Get-Credential 
         }
-        $domains = (Cypher -Query "MATCH (n:Domain) where n.domain is not null return distinct(n.domain)" -neo4jCredential $neo4jCredential -Expand data -Server $Server -Port $Port)
+        $domains = (Cypher -Query "MATCH (n:Domain) where n.domain is not null return distinct(n.domain)" -DBName $DBName -neo4jCredential $neo4jCredential -Expand data -Server $Server -Port $Port)
     }
     process{
         foreach($domain in $domains){
             $d = $domain[0]
-            Invoke-WatchDog -Domain $d -Quick -UserDomain $d -neo4jCredential $cred  | 
+            Invoke-WatchDog -Domain $d -Quick -UserDomain $d -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred  | 
                 ReportDog -neo4jCredential $cred >> "$outputDir\$d`_watchdog.txt";
-            Get-GeneralRiskStats -GroupName "DOMAIN ADMINS@$d" -neo4jCredential $cred >> "$outputDir\$d`_general_risk.txt"
+            Get-GeneralRiskStats -GroupName "DOMAIN ADMINS@$d" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred >> "$outputDir\$d`_general_risk.txt"
         }
     }
     end{}
@@ -701,24 +764,26 @@ function Invoke-AllDomainReports {
 function Get-BloodHoundDBInfo{
     [Alias('DBInfo')]
     Param(
-        [Parameter(Mandatory=$false,Position=1)]
-        [pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=1)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=2)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=3)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
     )
     if ($null -eq $neo4jCredential){
         $neo4jCredential = Get-Credential 
     }
     Write-Verbose "[+][$(Time)] Fetching DB Info..."
     [PSCustomObject]@{
-        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0] 
-        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -expand Data -neo4jCredential $neo4jCredential)[0]
-        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Expand Data -neo4jCredential $neo4jCredential)[0]
-        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -expand Data -neo4jCredential $neo4jCredential)[0]
+        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0] 
+        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Server $Server -Port $Port -DBName $DBName -Expand Data -neo4jCredential $neo4jCredential)[0]
+        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
         }}
 #####End
 
@@ -748,8 +813,11 @@ Function Invoke-DataDog{
         [Parameter(Mandatory=0,Position=5)][Switch]$Quick,
         # Specify user origin
         [Parameter(Mandatory=0,Position=6)][String]$UserDomain,
+        [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential
         )
     Begin{
         $EdgeList = Switch("$ScanType".ToUpper()){
@@ -778,7 +846,7 @@ Function Invoke-DataDog{
         Foreach($Obj in $Name){
             # Get Group
             Write-Verbose "[?][$(Time)] Querying Group by Name"
-            $Grp = Cypher "MATCH (g:Group {name:'$Obj'}) RETURN g" -neo4jCredential $neo4jCredential | select Name,objectid,description
+            $Grp = Cypher "MATCH (g:Group {name:'$Obj'}) RETURN g" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row') | select Name,objectid,description
             # If Group not found
             if(-NOT $Grp.name){
                 Write-Warning "[!][$(Time)] OBJECT NOT FOUND: $Obj`r`n"
@@ -795,38 +863,40 @@ Function Invoke-DataDog{
                 # Direct Members
                 Write-Verbose "[.][$(Time)] Querying Direct Member Count"
                 $Cypher1   = "MATCH (m:User)$WhereDom MATCH p=shortestPath((m)-[r:MemberOf*1]->(n:Group {name:'$NmE'})) RETURN COUNT(m)"
-                $DirectMbr = (Cypher $Cypher1 -expand data -neo4jCredential $neo4jCredential)|Select -first 1
+                $DirectMbr = (Cypher $Cypher1 -Server $Server -Port $Port -DBName $DBName -expand @('results';'data';'row') -neo4jCredential $neo4jCredential)|Select -first 1
                 Write-Verbose "[.][$(Time)] > Direct Member: $DirectMbr"
                 # Unrolled Members
                 Write-Verbose "[.][$(Time)] Querying Nested Member Count"
                 $cypher2   = "MATCH (m:User)$WhereDom MATCH p=shortestPath((m)-[r:MemberOf*1..]->(n:Group {name:'$NmE'})) RETURN COUNT(m)"
-                $UnrollMbr =(Cypher $Cypher2 -expand data -neo4jCredential $neo4jCredential)|Select -first 1
+                $UnrollMbr =(Cypher $Cypher2 -Server $Server -Port $Port -DBName $DBName -expand @('results';'data';'row') -neo4jCredential $neo4jCredential)|Select -first 1
                 Write-Verbose "[.][$(Time)] > Nested Member: $($UnrollMbr-$DirectMbr)"
                 # Shortest Path
                 $Cypher3   = "MATCH (m:User)$WhereDom MATCH p=$q((m)-[r$EdgeList*1..]->(n:Group {name:'$NmE'})) RETURN p ${Order}LIMIT $Limit"
                 Write-Verbose "[.][$(Time)] Querying User Shortest Paths"
-                $RawData  = Cypher $Cypher3 -expand data -neo4jCredential $neo4jCredential
+                $RawData  = Cypher $Cypher3 -Server $Server -Port $Port -DBName $DBName -GraphInfo -Expand @('results';'data';'graph') -neo4jCredential $neo4jCredential
                 # User Path Count
                 $PathCount = $RawData.count
-                $UserCount = ($RawData.start|sort -unique).count
+                #TODO: get-NodeByID
+                $UserCount = ($RawData.relationships.startNode|sort -unique).count
                 Write-Verbose "[.][$(Time)] > UserPathCount: $UserCount"
                 # Node Weight
                 Write-Verbose "[.][$(Time)] Grouping Nodes"
-                $AllNodeU = $RawData.nodes | Group  | Select name,count
+                $AllNodeU = $RawData.nodes.id | Group  | Select name,count
                 Write-Verbose "[.][$(Time)] Mesuring Weight"
                 $NodeWeight = @(Foreach($x in $AllNodeU){
                     #  Name
-                    $Obj=irm $x.Name -Headers $header -Verbose:$false
+                    $Obj=$RawData.nodes | ? {$_.id -eq $x.name}
+                    #$Obj=irm $x.Name -Headers $header -Verbose:$false
                     # Dist
-                    $Path = $RawData | ? {$_.nodes -match $x.name} | select -first 1
+                    $Path = $RawData | ? {$_.nodes.id -match $x.name} | select -first 1
                     $Step = $Path.Nodes.Count-1
                     if($Path){while($Path.Nodes[$Step] -ne $x.name -AND $Step -gt 1){$Step-=1}}
                     # Calc Weight
                     $W=$X|select -expand Count
                     # Out
                     [PScustomObject]@{
-                        Type     = if($Obj.metadata.labels.count -gt 1){($Obj.metadata.labels | ? {$_ -ne 'Base'})} else{$Obj.metadata.labels[0]}
-                        Name     = $Obj.data.name
+                        Type     = if($Obj.labels.count -gt 1){($Obj.labels | ? {$_ -ne 'Base'})} else{$Obj.labels[0]}
+                        Name     = $Obj.properties.name
                         Distance = ($Path.Nodes.Count)-$Step-1
                         Weight   = $W
                         Impact   = [Math]::Round($W/$RawData.Count*100,1)
@@ -888,8 +958,11 @@ Function Invoke-WatchDog{
         [Parameter(Mandatory=0)][Switch]$Quick,
         # Specify user origin
         [Parameter(Mandatory=0)][String]$UserDomain,
+        [Parameter(Mandatory=$false,Position=6)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=7)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=8)][string]$DBName = "bloodhoundexampledb.graphdb",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
-        [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
         )
     if($null -eq $neo4jCredential){
         $neo4jCredential = Get-Credential
@@ -901,16 +974,16 @@ Function Invoke-WatchDog{
         # Get Group
         $ObjID = if($Obj.SID -match '^S-1-5-32-'){"$Domain"+"-$($Obj.SID)"}else{"$($Obj.SID)"}
         Write-Verbose "[?][$(Time)] Searching Name by SID"
-        $Grp = Cypher "MATCH (g:Group {domain:'$Domain'}) WHERE g.objectid =~ '(?i)$ObjID' RETURN g" -neo4jCredential $neo4jCredential | select Name,objectid,description
+        $Grp = Cypher "MATCH (g:Group {domain:'$Domain'}) WHERE g.objectid =~ '(?i)$ObjID' RETURN g" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row') | select Name,objectid,description
         # If Group not found
         if(-NOT $Grp.objectid){
             Write-Warning  "[!][$(Time)] OBJECT NOT FOUND: $($Obj.Name)`r`n"
             }
         # If Group found
-        else{DataDog $Grp.name -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -neo4jCredential $neo4jCredential}
+        else{DataDog $Grp.name -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential}
         }
     ## If Extra ##
-    if($ExtraGroup){$ExtraGroup|DataDog -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -neo4jCredential $neo4jCredential}     
+    if($ExtraGroup){$ExtraGroup|DataDog -ScanType $ScanType -AllShortest:$AllShortest -Quick:$Quick -Limit $Limit -UserDomain $UserDomain -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential}     
     }
 #End
 
@@ -980,7 +1053,10 @@ Function Invoke-ReportDog{
         [Parameter()][String]$File,
         [Parameter()][Switch]$NoDBInfo,
         [Parameter()][Switch]$NoTotal,
-        [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
+        [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
+        [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential
         )
     Begin{
         # Empty Collector
@@ -1001,7 +1077,7 @@ impact = % of total weight
 ------------------------------
 # DB Info                    #
 ------------------------------
-$((Get-BloodHoundDBInfo -neo4jCredential $neo4jCredential |Out-String).trim())
+$((Get-BloodHoundDBInfo -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential |Out-String).trim())
 
 ##############################"
         }}
