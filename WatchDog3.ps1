@@ -415,7 +415,7 @@ function Remove-Edge{
         "NodeLabel"=("({0})-[{1}]->({2})" -f $StartNodeLabel,$EdgeType,$EndNodeLabel);"Backup"=$backup}
     }
     process{
-        $query = "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) DELETE r"
+        $query = "match p=(n:$StartNodeLabel {name:`"$StartNodeName`"})-[r:$EdgeType]->(m:$EndNodeLabel {name:`"$EndNodeName`"}) DELETE r[0]"
         Cypher -Query $query -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential
     }
     end{
@@ -702,15 +702,15 @@ function Get-GeneralRiskStats{
         $averagePathLengthQuery = ("MATCH p = shortestPath((n{0}{1})-[*1..]->(g:Group {{name:'{2}'}})) where n<>g RETURN toInteger(AVG(LENGTH(p))) as avgPathLength" -f "",$filter,$GroupName)
     }
     process{
-        $totalUsers = [int](Cypher -Query $totalUsersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
-        $usersWithPath = [int](Cypher -Query $usersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $totalUsers = [int](Cypher -Query $totalUsersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
+        $usersWithPath = [int](Cypher -Query $usersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
 
-        $totalComputers = [int](Cypher -Query $totalComputersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
-        $computersWithPath = [int](Cypher -Query $computersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $totalComputers = [int](Cypher -Query $totalComputersQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
+        $computersWithPath = [int](Cypher -Query $computersWithPathQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
 
-        $averagePath = [int](Cypher -Query $averagePathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
-        $averageUserPath = [int](Cypher -Query $averageUserPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
-        $averageComputerPath = [int](Cypher -Query $averageComputerPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand data)[0]
+        $averagePath = [int](Cypher -Query $averagePathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
+        $averageUserPath = [int](Cypher -Query $averageUserPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
+        $averageComputerPath = [int](Cypher -Query $averageComputerPathLengthQuery -Server $Server -Port $Port -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row'))
 
         $percentUsers = 100*($usersWithPath/$totalUsers)
         $percentComputers = 100*($computersWithPath/$totalComputers)
@@ -740,7 +740,7 @@ function Invoke-AllDomainReports {
         if ($null -eq $neo4jCredential){
             $neo4jCredential = Get-Credential 
         }
-        $domains = (Cypher -Query "MATCH (n:Domain) where n.domain is not null return distinct(n.domain)" -DBName $DBName -neo4jCredential $neo4jCredential -Expand data -Server $Server -Port $Port)
+        $domains = (Cypher -Query "MATCH (n:Domain) where n.domain is not null return distinct(n.domain)" -DBName $DBName -neo4jCredential $neo4jCredential -Expand @('results';'data';'row') -Server $Server -Port $Port)
     }
     process{
         foreach($domain in $domains){
@@ -774,16 +774,16 @@ function Get-BloodHoundDBInfo{
     }
     Write-Verbose "[+][$(Time)] Fetching DB Info..."
     [PSCustomObject]@{
-        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0] 
-        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
-        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Server $Server -Port $Port -DBName $DBName -Expand Data -neo4jCredential $neo4jCredential)[0]
-        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -Server $Server -Port $Port -DBName $DBName -expand Data -neo4jCredential $neo4jCredential)[0]
+        Domains   = (Cypher 'MATCH (x:Domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Nodes     = (Cypher 'MATCH (x) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Users     = (Cypher 'MATCH (x:User) WHERE EXISTS(x.domain) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Computers = (Cypher 'MATCH (x:Computer) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Groups    = (Cypher 'MATCH (x:Group) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        OUs       = (Cypher 'MATCH (x:OU) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        GPOs      = (Cypher 'MATCH (x:GPO) RETURN COUNT(x)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Edges     = (Cypher 'MATCH (x)-[r]->() RETURN COUNT(r)' -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        ACLs      = (Cypher "MATCH x=(s)-[r]->(t) WHERE r.isacl=True RETURN COUNT(x)" -Server $Server -Port $Port -DBName $DBName -Expand @('results';'data','row') -neo4jCredential $neo4jCredential)
+        Sessions  = (Cypher "MATCH p=(s:Computer)-[r:HasSession]->(t:User) RETURN COUNT(r)" -Server $Server -Port $Port -DBName $DBName -expand @('results';'data','row') -neo4jCredential $neo4jCredential)
         }}
 #####End
 
@@ -840,7 +840,6 @@ Function Invoke-DataDog{
         if($null -eq $neo4jCredential){
             $neo4jCredential = Get-Credential
         }
-        $header = createNeo4jHeaders -neo4jCredential $neo4jCredential
     }
     Process{
         Foreach($Obj in $Name){
@@ -857,7 +856,6 @@ Function Invoke-DataDog{
                 $SD   = $Grp.objectid
                 $Nme  = $Grp.Name
                 $Desc = $Grp.Description
-                #if($UserDomain){$WhereDom=" WHERE m.name=~'@$($Grp.Name.split('@')[1])'"}
                 if($UserDomain){$WhereDom=" WHERE m.name ENDS WITH '@$($UserDomain.ToUpper())'"}
                 Write-Verbose "[*][$(Time)] $Nme"
                 # Direct Members
@@ -876,7 +874,6 @@ Function Invoke-DataDog{
                 $RawData  = Cypher $Cypher3 -Server $Server -Port $Port -DBName $DBName -GraphInfo -Expand @('results';'data';'graph') -neo4jCredential $neo4jCredential
                 # User Path Count
                 $PathCount = $RawData.count
-                #TODO: get-NodeByID
                 $UserCount = ($RawData.relationships.startNode|sort -unique).count
                 Write-Verbose "[.][$(Time)] > UserPathCount: $UserCount"
                 # Node Weight
@@ -885,8 +882,10 @@ Function Invoke-DataDog{
                 Write-Verbose "[.][$(Time)] Mesuring Weight"
                 $NodeWeight = @(Foreach($x in $AllNodeU){
                     #  Name
-                    $Obj=$RawData.nodes | ? {$_.id -eq $x.name}
-                    #$Obj=irm $x.Name -Headers $header -Verbose:$false
+                    $Obj=$RawData.nodes | ? {$_.id -eq $x.name} | select -First 1
+                    if ($Obj.properties.objectid -eq $SD){
+                        Continue
+                    }
                     # Dist
                     $Path = $RawData | ? {$_.nodes.id -match $x.name} | select -first 1
                     $Step = $Path.Nodes.Count-1
