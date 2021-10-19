@@ -744,10 +744,9 @@ function Invoke-AllDomainReports {
     }
     process{
         foreach($domain in $domains){
-            $d = $domain[0]
-            Invoke-WatchDog -Domain $d -Quick -UserDomain $d -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred  | 
-                ReportDog -neo4jCredential $cred >> "$outputDir\$d`_watchdog.txt";
-            Get-GeneralRiskStats -GroupName "DOMAIN ADMINS@$d" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred >> "$outputDir\$d`_general_risk.txt"
+            Invoke-WatchDog -Domain $domain -Quick -UserDomain $domain -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred  | 
+                ReportDog -neo4jCredential $cred >> "$outputDir\$domain`_watchdog.txt";
+            Get-GeneralRiskStats -GroupName "DOMAIN ADMINS@$domain" -Server $Server -Port $Port -DBName $DBName -neo4jCredential $cred >> "$outputDir\$domain`_general_risk.txt"
         }
     }
     end{}
