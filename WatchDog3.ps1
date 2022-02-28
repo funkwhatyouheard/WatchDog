@@ -186,7 +186,7 @@ function Invoke-Cypher{
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
         # Database Name for neo4j
-        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential
         )
@@ -236,7 +236,7 @@ function Backup-Neo4jDB {
             $Neo4jInstallDir = ((gwmi win32_service | ?{$_.Name -eq "Neo4j"} | select PathName).pathname -split "bin\\tools\\prunsrv-[a-zA-A0-9]+?.exe")[0]
         }
         $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
-        $db = "{0}\{1}.graphdb" -f $dbDir, $DBName.TrimEnd(".graphdb")
+        $db = "{0}\{1}.db" -f $dbDir, $DBName.TrimEnd(".db")
         $date = (get-date)
         $timestamp = "{0}_{1}_{2}_{3}{4}{5}" -f $date.Month, $date.Day, $date.Year, $date.Hour, $date.Minute, $date.Second
         $backupDir = "{0}\backups\{1}" -f $dbDir.TrimEnd("\"), $timestamp
@@ -249,7 +249,7 @@ function Backup-Neo4jDB {
         Copy-Item -Path $db -Destination $backupDir -Recurse
     }
     end{
-        return "{0}\{1}.graphdb" -f $backupDir, $DBName
+        return "{0}\{1}.db" -f $backupDir, $DBName
     }
 }
 
@@ -304,7 +304,7 @@ function Restore-Neo4jDB {
         }
         #RUN AS ADMIN TO FORCE STOP/START THE SERVICE OR IT WILL FAIL
         $dbDir = "{0}\data\databases" -f $Neo4jInstallDir.TrimEnd("\")
-        $currDB = "{0}\{1}.graphdb" -f $dbDir, $DBName
+        $currDB = "{0}\{1}.db" -f $dbDir, $DBName
     }
     process{
         try{
@@ -331,7 +331,7 @@ function Get-EdgeInfo{
         [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential
     )
@@ -387,7 +387,7 @@ function Remove-Edge{
         [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential,
         [Parameter(Mandatory=$false,Position=11)][switch]$NoBackup
@@ -431,7 +431,7 @@ function Get-NodeInfo{
         [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=6)][String]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=6)][String]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
     )
@@ -497,7 +497,7 @@ function Get-NodeProperties {
         [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
     )
@@ -518,7 +518,7 @@ function Get-NodeLabels {
         [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
     )
@@ -543,7 +543,7 @@ function Remove-Node{
         [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential,
         [Parameter(Mandatory=$false,Position=9)][switch]$NoBackup
@@ -590,7 +590,7 @@ function Import-Node{
         [Parameter(Mandatory=$false,Position=3)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=4)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=5)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=5)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=6)][pscredential]$neo4jCredential
     )
@@ -678,7 +678,7 @@ function Get-GeneralRiskStats{
         [Parameter(Mandatory=$false,Position=4)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=5)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=6)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=6)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=7)][pscredential]$neo4jCredential
     )
@@ -732,7 +732,7 @@ function Invoke-AllDomainReports {
         [Parameter(Mandatory=$false,Position=2)][string]$Server = "localhost",
         # Port for neo4j
         [Parameter(Mandatory=$false,Position=3)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=4)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=5)][pscredential]$neo4jCredential
     )
@@ -765,7 +765,7 @@ function Get-BloodHoundDBInfo{
     Param(
         [Parameter(Mandatory=$false,Position=1)][string]$Server = "localhost",
         [Parameter(Mandatory=$false,Position=2)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=3)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=3)][string]$DBName = "bloodhoundexampledb.db",
         [Parameter(Mandatory=$false,Position=4)][pscredential]$neo4jCredential
     )
     if ($null -eq $neo4jCredential){
@@ -814,7 +814,7 @@ Function Invoke-DataDog{
         [Parameter(Mandatory=0,Position=6)][String]$UserDomain,
         [Parameter(Mandatory=$false,Position=7)][string]$Server = "localhost",
         [Parameter(Mandatory=$false,Position=8)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=9)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=10)][pscredential]$neo4jCredential
         )
@@ -958,7 +958,7 @@ Function Invoke-WatchDog{
         [Parameter(Mandatory=0)][String]$UserDomain,
         [Parameter(Mandatory=$false,Position=6)][string]$Server = "localhost",
         [Parameter(Mandatory=$false,Position=7)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=8)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=8)][string]$DBName = "bloodhoundexampledb.db",
         # Credential for neo4jDB... can exclude if removed requirement for local auth
         [Parameter(Mandatory=$false,Position=9)][pscredential]$neo4jCredential
         )
@@ -1053,7 +1053,7 @@ Function Invoke-ReportDog{
         [Parameter()][Switch]$NoTotal,
         [Parameter(Mandatory=$false,Position=5)][string]$Server = "localhost",
         [Parameter(Mandatory=$false,Position=6)][int]$Port = 7474,
-        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.graphdb",
+        [Parameter(Mandatory=$false,Position=7)][string]$DBName = "bloodhoundexampledb.db",
         [Parameter(Mandatory=$false,Position=8)][pscredential]$neo4jCredential
         )
     Begin{
